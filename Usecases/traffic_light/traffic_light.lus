@@ -1,0 +1,123 @@
+(*
+Timed Automata representing a traffic light with one pedestrian crossing
+the inputs are P (pedestrian) and C (car). They are signals that are True
+while there are pedestrians or cars in the crossing.
+--
+The state of the automaton is composed of [light_cars, light_pedestrians]
+with 1=green ; 2=orange ; 3=red
+--
+tr indicates the transition
+*)
+
+
+-- time
+
+node counter (foo: bool) returns (count:int) ;
+let
+	count = 0 -> (pre count) + 1 ;
+tel
+
+-- transitions 
+
+-- transition 1 to state 2
+
+node tr1_c (p: bool ;  tc, counter: int) returns (itc : int) ;
+var counter_tr : int ;
+let
+	counter_tr = (counter) -> if ((not (pre p)) and p) then (counter) else (pre counter_tr) ;
+	itc = 1 -> if (p and (counter > counter_tr+4)) then 2 else tc ;
+tel 
+
+node tr1_p (p: bool ;  tp, counter: int) returns (itp : int) ;
+var counter_tr : int ;
+let
+	counter_tr = (counter) -> if ((not (pre p)) and p) then (counter) else (pre counter_tr) ;
+	itp = 3 -> if (p and (counter > (counter_tr+5))) then 3 else tp ;
+tel
+
+-- transition 2  to state 3
+
+node tr2_c (p: bool ; tc,counter: int) returns (itc : int) ;
+var counter_tr : int ;
+let
+	counter_tr = (counter) -> if ((not (pre p)) and p) then (counter) else (pre counter_tr) ;
+	itc = 2 -> if (counter > counter_tr+7) then 3 else tc ;
+tel 
+
+node tr2_p (tp, counter: int) returns (itp : int) ;
+
+let
+	itp =  3 -> pre tp ;
+tel 
+
+-- transition 3  to state 4
+
+node tr3_c (tc: int) returns (itc : int) ;
+let
+		itc =  3 -> tc ;
+tel 
+
+node tr3_p (p: bool ; tp, counter: int) returns (itp : int) ;
+var counter_tr : int ;
+let
+	counter_tr = (counter) -> if ((not (pre p)) and p) then (counter) else (pre counter_tr) ;
+	itp = 3 -> if (counter > (counter_tr+2)) then 1 else tp ;
+tel
+
+-- transition 4  to state 5
+
+node tr4_c (tc: int) returns (itc : int) ;
+let
+		itc =  3 -> tc ;
+tel 
+
+node tr4_p (p, c: bool ;  tp,counter: int) returns (itp : int) ;
+var counter_tr : int ;
+let
+	counter_tr = (counter) -> if ((not (pre p)) and p) then (counter) else (pre counter_tr) ;
+	itp = 1 -> if
+	    (
+	    ( (not p) and (counter > (counter_tr+5) ) )
+	    or (counter > (counter_tr+10) )
+	    or ( c and (counter > (counter_tr+5) ))
+	    )
+	    then 3 else tp ;
+tel
+
+-- transition 5  to state 6
+
+node tr5_c (p:bool ; tc, counter: int) returns (itc : int) ;
+var counter_tr : int ;
+let
+		counter_tr = (counter) -> if ((not (pre p)) and p) then (counter) else (pre counter_tr) ;
+		itc = 3 -> if (counter > counter_tr+12) then 1 else tc ;
+tel 
+
+node tr5_p (tp: int) returns (itp : int) ;
+let
+	itp =  3 -> tp ;
+tel
+
+
+-- states
+--%MAIN
+node states (p_press , c :  bool) returns (tc,tp : int ; p : bool) ;
+var p_tc, p_tp : int ;
+--p : bool ;
+let
+  p = false -> if (p_press and (not pre p)) then (true) else (
+  if ((pre tc  = 3) and (pre tp = 1)) then (false) else (pre p)) ;
+  p_tc = 1-> pre tc ;
+  p_tp = 1-> pre tp ;
+	tc = 1 -> if (((pre tc) = 1) and ((pre tp) = 3)) then tr1_c(p, p_tc, counter(true)) else
+	       	  ( if (((pre tc) = 2) and ((pre tp) = 3)) then tr2_c(p, p_tc, counter(true)) else
+		        ( if (((pre tc) = 3) and ((pre tp) = 3)) then
+		        ( ( if (p) then tr3_c(p_tc) else  tr5_c(p, p_tc, counter(true)) ) )
+		        else tr4_c(p_tc))) ;
+		     
+	tp = 3 -> if (((pre tc) = 1) and ((pre tp) = 3)) then tr1_p(p, p_tp, counter(true)) else
+	       	  if (((pre tc) = 2) and ((pre tp) = 3)) then tr2_p(p_tp, counter(true)) else
+		  if (((pre tc) = 3) and ((pre tp) = 3)) then
+		     ( if (p) then tr3_p(p, p_tp, counter(true)) else  tr5_p(p_tp) ) else tr4_p(p,c,p_tp,counter(true)) ;
+
+tel
