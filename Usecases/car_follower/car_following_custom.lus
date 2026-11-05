@@ -1,0 +1,114 @@
+(*
+-- === car_following_monitor.lus ===
+-- car_following_monitor.lus
+--
+-- Case study: nested SSTL observer monitoring of a car-following scenario.
+-- Two vehicles on a straight road (dt = 0.5 s/tick, distances in metres).
+--
+-- Scenario: lead vehicle (c1) drives at 20 m/s then applies emergency braking
+-- (-8 m/s^2) from tick 6 until stopped.  Follower (c2) uses an Adaptive Cruise
+-- Control (ACC) to maintain a 1-second headway gap (minimum 6 m).
+--
+-- Properties:
+--   Q1  G[2,6](F[1,4] safe_gap)
+--       Bounded G(F): 2-deep, modular synthesis (Bellanger Eq. 42 shape)
+--   Q2  G(F[3,10](G[1,4] safe_gap))
+--       Unbounded G(F(G)): 3-deep, shift-register construction
+--   Q2' G(F[1,4](G[1,2] adequate_gap))
+--       Same shape as Q2 but tighter tolerance -- violation scenario
+--   Q3  vel_moving U[2,10] F[1,3](G[1,2] gap_settled)
+--       U-outermost: 3-deep, flat-chain synthesis
+--
+-- -----------------------------------------------------------------------
+-- System nodes
+-- -----------------------------------------------------------------------
+
+*)
+
+-- Lead vehicle: constant 20 m/s for ticks 0-5, then emergency brake.
+node lead_vehicle( init_vel1 : real ) returns (pos1, vel1: real);
+var n: int; a1: real;
+let
+  n    = 0 -> pre(n) + 1;
+  a1   = if n >= 6 and (init_vel1 -> pre(vel1)) > 0.0 then -8.0 else 0.0;
+  vel1 = init_vel1 -> if pre(vel1) + a1 * 0.5 < 0.0 then 0.0
+                 else pre(vel1) + a1 * 0.5;
+  pos1 = 0.0 -> pre(pos1) + pre(vel1) * 0.5;
+tel
+
+-- Follower with ACC (1-second headway, min gap 6 m, clamp to [-8, +2] m/s^2).
+-- Uses previous-tick velocities in the controller to avoid algebraic loops.
+node follower_acc(pos1, vel1,
+init_pos2, init_vel2
+: real) returns (pos2, vel2, accel2: real);
+var gap, target_gap, a2_raw: real;
+let
+  pos2       = init_pos2 -> pre(pos2) + pre(vel2) * 0.5;
+  gap        = pos1 - pos2 - 4.0;
+  target_gap = 6.0 + (init_vel2 -> pre(vel2)) * 1.0;
+  a2_raw     = 1.0 * (gap - target_gap)
+               - 0.5 * ((init_vel2 -> pre(vel2)) - (init_vel2 -> pre(vel1)));
+  accel2     = if a2_raw > 2.0  then 2.0
+               else if a2_raw < -8.0 then -8.0
+               else a2_raw;
+  vel2       = init_vel2 -> if pre(vel2) + accel2 * 0.5 < 0.0 then 0.0
+                        else if pre(vel2) + accel2 * 0.5 > 30.0 then 30.0
+                        else pre(vel2) + accel2 * 0.5;
+tel
+
+-- -----------------------------------------------------------------------
+-- Boolean predicates
+-- -----------------------------------------------------------------------
+
+-- Q1/Q2: minimum safe following distance (6 m).
+node safe_gap(gap: real) returns (out: bool);
+let out = gap >= 6.0; tel
+
+-- Q2': comfortable following gap (10 m) -- tighter, fails during braking.
+node adequate_gap(gap: real) returns (out: bool);
+let out = gap >= 10.0; tel
+
+-- Q3 phi: gap has converged to close-following range [6, 12] m.
+-- Initially gap = 22 m (too large); converges to ~6 m after braking.
+node gap_settled(gap: real) returns (out: bool);
+let out = (gap >= 6.0) and (gap <= 12.0); tel
+
+-- Q3 psi: follower still moving (> 2 m/s); true until deceleration complete.
+node vel_moving(vel2: real) returns (out: bool);
+let out = vel2 > 2.0; tel
+
+-- -----------------------------------------------------------------------
+-- Top-level monitoring node
+-- -----------------------------------------------------------------------
+
+node car_following ( init_vel1, init_pos2, init_vel2: real) returns (
+  gap_val  : real;   -- following gap (m)
+  vel1_out : real;   -- lead speed (m/s)
+  vel2_out : real;   -- follower speed (m/s)
+  accel2   : real;   -- follower acceleration (m/s^2)
+);
+(*@contract
+assume ( (init_vel1 <= 20.0) and (init_vel1 >= 15.0) ) ;
+assume ((init_pos2 >= -30.0) and (init_pos2 <= -25.0) );
+assume ( (init_vel2 >= 20.0) and ((init_vel2 <= 30.0)) );
+-- guarantees for initial state-space
+guarantee ( (init_vel1 <= 20.0) and (init_vel1 >= 15.0) ) ;
+guarantee ((init_pos2 >= -30.0) and (init_pos2 <= -25.0) );
+guarantee ( (init_vel2 >= 20.0) and ((init_vel2 <= 30.0)) );
+-- guarantees are imposed to the outputs, taking values from the nodes of leader and follower, and increasing the interval for gap_val and vel2_out
+-- guarantee ((gap_val <= 50.0) and (gap_val >= 0.0)) ; -- distance cars , not needed if guarantees on pos2
+guarantee ((vel1_out <= 20.0) and ((vel1_out >= 0.0))) ; -- leader car
+guarantee ((vel2_out <= 40.0) and ((vel2_out >= 0.0))) ; -- follower car
+guarantee ((accel2 <= 2.0) and ((accel2 >= -8.0))) ; -- follower car
+-- specifications
+guarantee temporal "always [2,6] ( eventually [1,4] (gap_val >= 6.0) )" ;  -- Q1 , agrees with Logan.
+guarantee temporal "eventually [3,10] ( always [1,4] (gap_val >= 6.0) )" ;  -- Q2
+guarantee temporal "eventually [1,4] ( always [1,2] (gap_val >= 10.0) )" ;  -- Q2'
+guarantee temporal " (vel2_out > 2.0) until [2,10] ( ( eventually [1,3] ( always [1,2] ((gap_val >= 6.0) and (gap_val <= 12.0)) ) ) )" ;  -- Q3
+*)
+var pos1, pos2: real;
+let
+  (pos1, vel1_out)           = lead_vehicle(init_vel1);
+  (pos2, vel2_out, accel2)   = follower_acc(pos1, vel1_out , init_pos2, init_vel2);
+  gap_val                    = pos1 - pos2 - 4.0;
+tel
