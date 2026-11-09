@@ -1,0 +1,189 @@
+
+--  SPECIFICATIONS
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------GENERAL USEFUL NODES ----------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- needed to be added when removed "include 'kind2_lib.lus' "
+-- faster computation then with library imported
+node kind2_times(x1: real ; x2: real ) returns (prod : real);
+let
+	prod = x1*x2 ;
+tel
+
+-- indicates the crossing of the signals
+node signal_crossing (ref, sys : real) returns (crossing : bool) ;
+let 
+	crossing = (ref = sys) -> ((pre ref < pre sys) and (ref >= sys)) or ((pre ref > pre sys) and (ref <= sys)) ; 
+tel
+
+-- returns the absolute value of our signal
+node absolute_value (x: real) returns (abs: real)
+let
+    abs = if x >= 0.0 then x 
+          else -x;
+tel
+
+node min (a,b: int) returns (valeur_min: int);
+let
+    valeur_min =
+        if a <= b then a
+        else b;
+tel
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------PT TEMPORAL NODES ----------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+node since (ev_ON,ev_OFF: bool) returns (out: bool); --modelling: (not ev_OFF)Since[0,tau-t](ev_ON)
+let
+	out = (ev_ON) -> (  ev_ON and (not ev_OFF) ) ; --we do not need the temporal operator because we are operating in the whole life of the system [0,tau-t]
+tel
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------- PT TRIGGER EVENTS -----------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+-- trigger_on rise time
+node trigger_on_rise_time ( p_trigger: bool ; ref, sys: real;  bound: real ) returns ( trigger: bool ) ;
+let
+	trigger = false -> ( not p_trigger ) and (absolute_value ( ref - sys ) > bound ) and
+	 ( absolute_value ( sys - ref )  < ( pre absolute_value ( sys - ref ) ) ) ;
+tel
+
+-- reset for trigger ON to deal with monitoring
+node reset_tr_ON (ev_OFF: bool ; r: real) returns (reset_t_ON: bool) ;
+let
+  reset_t_ON = true -> (not ev_OFF) and ((not condition_R(r)) or (pre reset_t_ON)) ;
+tel
+
+-- trigger_off_rise_time - Version with the bound
+node trigger_off_rise_time ( p_trigger: bool ; ref, sys: real ;  bound: real ) returns ( trigger: bool ) ;
+let
+	trigger = false -> ( p_trigger ) and ( (pre absolute_value(ref - sys) ) < bound )  ;
+tel
+
+
+
+-- condition of constant derivative for step and ramp input reference
+node condition_R (r: real) returns (const_deriv: bool) ;
+var
+	r_p : real;
+let
+	r_p = 0.0 -> pre r ;
+	const_deriv = false -> ( (r - r_p) = (pre (r - r_p)) );
+tel
+
+-- general formulation of the trigger
+node trigger_general_rt (ev_ON,ev_OFF: bool; r: real) returns (trigger_out: bool) ;
+let
+	trigger_out = false ->  since( ((ev_ON and reset_tr_ON(ev_OFF,r)) or (pre trigger_out)), ev_OFF ) and ( condition_R(r) );
+tel
+
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------- PROPERTY VERIFICATION --------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+--  SYSTEM
+
+
+--lead lag controller for the spring mass system
+
+--input_controller:  Delta ( desired position yd,  current position y)
+--outpu_controller: force applied to plant
+--input_plant: force
+--outpu_plant: current position y
+
+node sat(a: real) returns (b: real);
+let
+b = if a>=1.0 then 1.0 else (if a<=-1.0 then -1.0 else a);
+tel
+
+node spring_mass_controller(y, y_d: real)
+returns (out_1: real);
+var x_1, x_2, in_1: real;
+let 
+in_1 = sat(y-y_d);
+x_1 = 0.0 -> 0.499 * pre x_1 - 0.05* pre x_2 + 1.0* pre in_1 ;
+x_2 = 0.0 -> 0.01*pre x_1 + 1.0*pre x_2 ;
+
+out_1 = 564.48 *x_1 + 0.0*x_2 - 1280.0 *in_1 ;
+tel 
+
+node spring_mass_plant(in,init_pos,init_speed : real) returns (out: real);
+var x_1, x_2: real;
+let
+  x_1 = init_pos -> 1.0*pre x_1 + 0.01*pre x_2 + 0.00005*in; -- position is initialized
+  x_2 = init_speed -> 0.01*in -> -0.01*pre x_1 + 1.0*pre x_2 + 0.01*in;
+  -- x_2 = 0.0 -> -0.01*pre x_1 + 1.0*pre x_2 + 0.01*in; 
+  -- out = 1.0*x_1+0.0*x_2;
+  out = x_1;
+tel
+
+
+-- full system dynamics
+node full_system (y_d, init_pos,init_speed: real) returns (pos, force: real);
+
+let
+    force = 0.0 -> pre (spring_mass_controller(pos, y_d));
+    pos = init_pos -> spring_mass_plant(force, init_pos,init_speed);  -- no parentheses
+tel
+
+
+
+-- SYSTEM WITH SPECIFICATIONS
+
+node evaluation (pre_ref , ref: real; init_pos, init_speed: real; bound: real)
+returns	(bound_rt: real ; diff_ref_sys : real );
+(*@contract
+-- assumptions
+assume (pre_ref = (ref -> (pre ref))) ; -- previous value
+assume (pre ref = ref) ; -- constant inputs
+assume ( (pre init_pos = init_pos) and (pre init_speed = init_speed) ) ; 
+assume (ref <= 2.0 and ref >= -2.0) ; -- bounded input
+assume (init_pos <= 6.412831 and init_pos >= -6.412831) ; 
+assume (init_speed <= 6.911083 and init_speed >= -6.911083) ; -- R# speed
+assume (absolute_value(init_pos - ref) >= 0.5) ; -- minimum distance initial value
+-- specs
+assume (bound = 0.25) ; 
+-- guarantees for reachable states
+guarantee (pre_ref = (ref -> (pre ref))) ;
+guarantee (ref <= 2.0 and ref >= -2.0) ;
+guarantee (ref <= 2.0 and ref >= -2.0) ; -- R# input
+guarantee (init_pos <= 6.412831 and init_pos >= -6.412831) ; -- R# position
+guarantee (init_speed <= 6.911083 and init_speed >= -6.911083) ; -- R# speed
+-- performance properties
+guarantee temporal "eventually [0,30] ( diff_ref_sys <= bound_rt)" when (not (absolute_value(ref - pre_ref) > 0.0)) ; -- trigger resets when the reference changes.
+*)
+var
+	pos, force: real ;
+	ref_signal : real ;
+	time_step : int ;
+	
+let
+	-- universal counter
+	time_step = 0 -> (pre time_step) + 1 ;
+
+	 -- bounding the reference  to the interval of interests and make it constant
+	 ref_signal = ( if (ref > 1.0) then 1.0 else (
+		    if (ref < -1.0) then -1.0 else ref
+		  ) ) -> pre ref_signal;
+
+	-- system
+	pos, force = full_system(ref_signal, init_pos, init_speed) ; -- system
+
+	-- spec
+	bound_rt = (absolute_value(init_pos-ref))*bound ;
+
+	-- difference
+	diff_ref_sys = absolute_value ( pos-ref ) ;
+
+tel 
