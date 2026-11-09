@@ -1,0 +1,80 @@
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------GENERAL USEFUL NODES ----------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- needed to be added when removed "include 'kind2_lib.lus' "
+-- faster computation then with library imported
+node kind2_times(x1: real ; x2: real ) returns (prod : real);
+let
+	prod = x1*x2 ;
+tel
+
+-- indicates the crossing of the signals
+node signal_crossing (ref, sys : real) returns (crossing : bool) ;
+let 
+	crossing = (ref = sys) -> ((pre ref < pre sys) and (ref >= sys)) or ((pre ref > pre sys) and (ref <= sys)) ; 
+tel
+
+-- returns the absolute value of our signal
+node absolute_value (x: real) returns (abs: real)
+let
+    abs = if x >= 0.0 then x 
+          else -x;
+tel
+
+node min (a,b: int) returns (valeur_min: int);
+let
+    valeur_min =
+        if a <= b then a
+        else b;
+tel
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------SYSTEM ------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+--lead lag controller for the spring mass system
+
+--input_controller:  Delta ( desired position yd,  current position y)
+--outpu_controller: force applied to plant
+--input_plant: force
+--outpu_plant: current position y
+
+node sat(a: real) returns (b: real);
+let
+b = if a>=1.0 then 1.0 else (if a<=-1.0 then -1.0 else a);
+tel
+
+node spring_mass_controller(y, y_d: real)
+returns (out_1: real);
+var x_1, x_2, in_1: real;
+let 
+in_1 = sat(y-y_d);
+x_1 = 0.0 -> 0.499 * pre x_1 - 0.05* pre x_2 + 1.0* pre in_1 ;
+x_2 = 0.0 -> 0.01*pre x_1 + 1.0*pre x_2 ;
+
+out_1 = 564.48 *x_1 + 0.0*x_2 - 1280.0 *in_1 ;
+tel 
+
+node spring_mass_plant(in,init_pos,init_speed : real) returns (out: real);
+var x_1, x_2: real;
+let
+  x_1 = init_pos -> 1.0*pre x_1 + 0.01*pre x_2 + 0.00005*in; -- position is initialized
+  x_2 = init_speed -> 0.01*in -> -0.01*pre x_1 + 1.0*pre x_2 + 0.01*in;
+  -- x_2 = 0.0 -> -0.01*pre x_1 + 1.0*pre x_2 + 0.01*in; 
+  -- out = 1.0*x_1+0.0*x_2;
+  out = x_1;
+tel
+
+
+-- full system dynamics
+node full_system (y_d, init_pos,init_speed: real) returns (pos, force: real);
+
+let
+    force = 0.0 -> pre (spring_mass_controller(pos, y_d));
+    pos = init_pos -> spring_mass_plant(force, init_pos,init_speed);  -- no parentheses
+tel
+
+
