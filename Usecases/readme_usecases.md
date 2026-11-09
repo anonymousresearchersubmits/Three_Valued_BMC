@@ -2,7 +2,7 @@
 
 Illustration of the use cases.
 
-## Case Study 1 : car_follower_SSTL_mon_RV26
+## Case Study 1 : car follower
 A follower car that needs to maintain safe distance from the leader car, which breaks abruptly.
 In the original file are also the specification and the nodes for monitoring.
 By Kenwright, Logan, et al. "Synchronous Observers Revisited for Runtime Verification of Lustre Using STL." International Conference on Runtime Verification. Cham: Springer Nature Switzerland, 2026.
